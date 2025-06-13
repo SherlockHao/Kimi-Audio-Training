@@ -142,7 +142,7 @@ def main(model_pretrained=True):
         "text_top_k": 5,
         "audio_repetition_penalty": 1.0,
         "audio_repetition_window_size": 64,
-        "text_repetition_penalty": 1.3,
+        "text_repetition_penalty": 1.2,
         "text_repetition_window_size": 16,
     }
     
@@ -263,16 +263,7 @@ if __name__ == "__main__":
     multiprocessing.set_start_method('spawn', force=True)
     
     # 支持命令行参数：python script.py [model_pretrained] [num_gpus]
-    model_pretrained = True
-    num_gpus_limit = None
-    
-    if len(sys.argv) > 1:
-        model_pretrained = sys.argv[1].lower() == 'true'
-    if len(sys.argv) > 2:
-        num_gpus_limit = int(sys.argv[2])
-    
-    # 如果指定了GPU数量限制，设置环境变量
-    if num_gpus_limit:
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(i) for i in range(num_gpus_limit))
+    model_pretrained = False
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
     
     main(model_pretrained)

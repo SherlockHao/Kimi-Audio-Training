@@ -28,9 +28,9 @@ def main(model_pretrained=True):
     if model_pretrained:
         model_path = "moonshotai/Kimi-Audio-7B-Instruct"
     else:
-        model_path = "output/finetuned_hf_for_inference"
+        model_path = "output/finetuned_hf_for_inference0611"
     jsonl_path = "/opt/data/nvme4/kimi/data/testset0605/audio_data.jsonl"
-    output_file = "testset0605_kimi_original.json"
+    output_file = "testset0605_kimi_06112w.json"
     
     # 只加载一次模型
     if model_pretrained:
@@ -149,4 +149,4 @@ def main(model_pretrained=True):
     print("\nBatch inference completed!")
 
 if __name__ == "__main__":
-    main(True)
+    main(False)

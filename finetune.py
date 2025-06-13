@@ -58,6 +58,10 @@ class TrainingArguments(transformers.TrainingArguments):
             "help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
         },
     )
+    repetition_penalty: float = field(
+        default=1.3,
+        metadata={"help": "Repetition penalty for text generation"},
+    )
 
 
 
@@ -121,12 +125,31 @@ def make_supervised_data_module(
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
 
 
+def apply_repetition_penalty(logits, input_ids, penalty=1.3):
+    """对已出现的token施加惩罚"""
+    batch_size, seq_len, vocab_size = logits.shape
+    
+    for i in range(batch_size):
+        for j in range(seq_len):
+            # 获取当前位置之前的所有token
+            prev_tokens = input_ids[i, :j+1]
+            # 对已出现的token施加惩罚
+            for token in prev_tokens.unique():
+                if token != IGNORE_TOKEN_ID:
+                    logits[i, j, token] /= penalty
+    
+    return logits
+
+
 def compute_loss(outputs, labels, num_items_in_batch=None):
 
     audio_logits, text_logits = outputs.logits
 
     audio_labels, text_labels, audio_loss_mask, text_loss_mask = labels
     assert audio_labels.shape[0] == 1, print("we only support micro batch size 1 for demo purpose")
+
+    text_input_ids = labels[1]  
+    text_logits = apply_repetition_penalty(text_logits, text_input_ids, penalty=1.3)
 
     audio_loss = torch.nn.functional.cross_entropy(audio_logits.view(-1, audio_logits.shape[-1]), audio_labels.view(-1), reduction="none")
     text_loss = torch.nn.functional.cross_entropy(text_logits.view(-1, text_logits.shape[-1]), text_labels.view(-1), reduction="none")

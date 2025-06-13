@@ -91,24 +91,24 @@ torchrun $DISTRIBUTED_ARGS finetune.py \
     --data_path $DATA \
     --dataloader_num_workers 8 \
     --dataloader_pin_memory True \
-    --eval_ratio 0.05 \
+    --eval_ratio 0.01 \
     --bf16 True \
     --output_dir output/kimiaudio_ckpts \
-    --num_train_epochs 3 \
+    --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 32 \
+    --gradient_accumulation_steps 16 \
     --save_strategy "steps" \
-    --save_steps 500 \
+    --save_steps 100 \
     --save_total_limit 5 \
-    --learning_rate 2e-5 \
-    --weight_decay 0.05 \
+    --learning_rate 5e-6 \
+    --weight_decay 0.01 \
     --adam_beta2 0.95 \
-    --warmup_ratio 0.05 \
+    --warmup_ratio 0.1 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 50 \
+    --logging_steps 10 \
     --report_to "none" \
-    --model_max_length 512 \
+    --model_max_length 2048 \
     --gradient_checkpointing True \
     --lazy_preprocess True \
     --deepspeed finetune_codes/ds_config_zero3.json
