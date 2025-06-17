@@ -1,14 +1,5 @@
 #!/bin/bash
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-
-# Memory optimization settings
-export OMP_NUM_THREADS=16
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-export TOKENIZERS_PARALLELISM=false
-
-# Limit CPU usage per process to prevent memory bloat
-ulimit -v 262144000  # Limit virtual memory to ~250GB per process
-
 DIR=`pwd`
 
 # Guide:
@@ -32,7 +23,7 @@ MASTER_ADDR=${MASTER_ADDR:-localhost}
 # The port for communication
 MASTER_PORT=${MASTER_PORT:-6001}
 
-MODEL="moonshotai/Kimi-Audio-7B" # Set the path if you do not want to load from huggingface directly
+MODEL="moonshotai/Kimi-Audio-7B-Instruct" # Set the path if you do not want to load from huggingface directly
 
 PRETRAINED_MODEL_PATH=""
 
@@ -40,14 +31,9 @@ PRETRAINED_MODEL_PATH=""
 # See the section for finetuning in README for more information.
 DATA=""
 
-# LoRA hyperparameters - optimized for 800 hours of data
-LORA_R=32
-LORA_ALPHA=64
-LORA_DROPOUT=0.1
-
 function usage() {
     echo '
-Usage: bash finetune/finetune_lora_ds.sh [-m MODEL_PATH] [-d DATA_PATH] [-r LORA_RANK] [-a LORA_ALPHA]
+Usage: bash finetune/finetune_lora_ds.sh [-m MODEL_PATH] [-d DATA_PATH]
 '
 }
 
@@ -60,14 +46,6 @@ while [[ "$1" != "" ]]; do
         -d | --data )
             shift
             DATA=$1
-            ;;
-        -r | --lora_r )
-            shift
-            LORA_R=$1
-            ;;
-        -a | --lora_alpha )
-            shift
-            LORA_ALPHA=$1
             ;;
         -h | --help )
             usage
@@ -95,8 +73,6 @@ fi
 
 echo "PRETRAINED_MODEL_PATH: $PRETRAINED_MODEL_PATH"
 echo "DATA: $DATA"
-echo "LoRA R: $LORA_R"
-echo "LoRA Alpha: $LORA_ALPHA"
 
 DISTRIBUTED_ARGS="
     --nproc_per_node $GPUS_PER_NODE \
@@ -106,38 +82,38 @@ DISTRIBUTED_ARGS="
     --master_port $MASTER_PORT
 "
 
-echo "start LoRA finetune"
+echo "start finetune"
 echo "DISTRIBUTED_ARGS: $DISTRIBUTED_ARGS"
 
-torchrun $DISTRIBUTED_ARGS finetune_lora.py \
+torchrun $DISTRIBUTED_ARGS finetune.py \
     --model_name_or_path $MODEL \
     --model_path $PRETRAINED_MODEL_PATH \
     --data_path $DATA \
     --eval_ratio 0.05 \
     --bf16 True \
-    --output_dir output/kimiaudio_lora_ckpts \
-    --num_train_epochs 2 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
-    --gradient_accumulation_steps 8 \
+    --output_dir output/kimiaudio_ckpts \
+    --num_train_epochs 5 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 1 \
+    --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 1000 \
-    --save_total_limit 5 \
-    --learning_rate 2e-5 \
-    --weight_decay 0.01 \
-    --adam_beta2 0.999 \
-    --warmup_ratio 0.05 \
+    --save_total_limit 10 \
+    --learning_rate 1e-5 \
+    --weight_decay 0.1 \
+    --adam_beta2 0.95 \
+    --warmup_ratio 0.01 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 50 \
+    --logging_steps 1 \
     --report_to "none" \
-    --model_max_length 8192 \
+    --model_max_length 512 \
     --gradient_checkpointing True \
     --lazy_preprocess True \
     --deepspeed finetune_codes/ds_config_zero2.json \
-    --lora_r $LORA_R \
-    --lora_alpha $LORA_ALPHA \
-    --lora_dropout $LORA_DROPOUT \
-    --train_whisper True \
-    --train_vq_adaptor True \
-    --dataloader_num_workers 4 \
-    --dataloader_prefetch_factor 2
+    --use_lora \
+    --lora_r 8 \
+    --lora_alpha 16 \
+    --lora_dropout 0.05 \
+    --lora_target_modules "q_proj" "k_proj" "v_proj" "o_proj" \
+    --lora_bias "none"
