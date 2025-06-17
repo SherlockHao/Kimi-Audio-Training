@@ -78,6 +78,7 @@ def process_audio_files_parallel(model_path, base_path, output_base_path, sampli
     for scenario in scenarios:
         scenario_path = os.path.join(base_path, scenario)
         output_scenario_path = os.path.join(output_base_path, scenario)
+        output_scenario_path = output_base_path
         
         # 确保输出目录存在
         os.makedirs(output_scenario_path, exist_ok=True)
@@ -197,8 +198,8 @@ if __name__ == "__main__":
     }
 
     # 路径配置
-    base_path = "/opt/data/nvme4/kimi/data/regression/audio/"
-    output_base_path = "/opt/data/nvme4/kimi/data/regression/results/kimi_original_p1_test/"
+    base_path = "/workplace/haoyiya.hyy/project/data/test_set/regression/audio/"
+    output_base_path = "~/projects/silero-vad/.src/silero_vad/data/.bin/projects/results/regression/kimi_original_p1_test/"
     
     # 并行处理所有音频文件
     process_audio_files_parallel(

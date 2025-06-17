@@ -29,7 +29,7 @@ def main(model_pretrained=True):
         model_path = "moonshotai/Kimi-Audio-7B-Instruct"
     else:
         model_path = "output/finetuned_hf_for_inference0611"
-    jsonl_path = "/opt/data/nvme4/kimi/data/testset0605/audio_data.jsonl"
+    jsonl_path = "~/projects/silero-vad/.src/silero_vad/data/.bin/projects/jsons/audio_data.jsonl"
     output_file = "testset0605_kimi_06112w.json"
     
     # 只加载一次模型

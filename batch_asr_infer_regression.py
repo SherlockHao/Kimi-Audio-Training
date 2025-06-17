@@ -84,8 +84,8 @@ if __name__ == "__main__":
     }
 
     # 路径配置
-    base_path = "/opt/data/nvme4/kimi/data/regression/audio/"
-    output_base_path = "/opt/data/nvme4/kimi/data/regression/results/kimi_0612v1/"
+    base_path = "/workplace/haoyiya.hyy/project/data/test_set/regression/audio/"
+    output_base_path = "~/projects/silero-vad/.src/silero_vad/data/.bin/projects/results/regression/kimi_original_p1_test/"
     
     # 处理所有音频文件
     process_audio_files(model, base_path, output_base_path, sampling_params)
