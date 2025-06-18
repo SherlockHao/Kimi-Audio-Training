@@ -77,7 +77,7 @@ def process_audio_files_parallel(model_path, base_path, output_base_path, sampli
     
     for scenario in scenarios:
         scenario_path = os.path.join(base_path, scenario)
-        output_scenario_path = os.path.join(output_base_path, scenario)
+        # output_scenario_path = os.path.join(output_base_path, scenario)
         output_scenario_path = output_base_path
         
         # 确保输出目录存在

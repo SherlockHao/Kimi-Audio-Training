@@ -6,7 +6,7 @@ import json
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, default="moonshotai/Kimi-Audio-7B-Instruct")
+    parser.add_argument("--model_path", type=str, default="/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora7/export_model")
     args = parser.parse_args()
 
     model = KimiAudio(
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         "text_top_k": 5,
         "audio_repetition_penalty": 1.0,
         "audio_repetition_window_size": 64,
-        "text_repetition_penalty": 1.3,
+        "text_repetition_penalty": 1.0,
         "text_repetition_window_size": 16,
     }
 
@@ -30,13 +30,13 @@ if __name__ == "__main__":
         {
             "role": "user",
             "message_type": "audio",
-            "content": "test_audios/asr_example.wav",
+            "content": "/team/shared/data_regression/dataset_phase1/acoustic/real_scene_robustness/clothing_supply/clothing_supply_case1_009_16k_mono.wav",
         },
     ]
 
     wav, text = model.generate(messages, **sampling_params, output_type="text")
     print(">>> output text: ", text)
-    output_file = "/opt/data/nvme4/kimi/data/output/single_wav_result.json"
+    output_file = "/team/haoyiya.hyy/output/single_wav_result.json"
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(text, f, ensure_ascii=False, indent=2)
 

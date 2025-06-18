@@ -23,24 +23,14 @@ def extract_audio_info(conversation):
     
     return audio_path, groundtruth
 
-def main(model_pretrained=True):
+def main():
     # 模型路径和参数配置
-    if model_pretrained:
-        model_path = "moonshotai/Kimi-Audio-7B-Instruct"
-    else:
-        model_path = "output/finetuned_hf_for_inference0611"
-    jsonl_path = "~/projects/silero-vad/.src/silero_vad/data/.bin/projects/jsons/audio_data.jsonl"
-    output_file = "testset0605_kimi_06112w.json"
+    model_path = "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora7/export_model"
+    jsonl_path = "/team/shared/data_term_test/testset0605/audio_data.jsonl"
+    output_file = "/team/shared/data_term_test/result/testset0605_kimi_06112w.json"
     
     # 只加载一次模型
-    if model_pretrained:
-        model = KimiAudio(
-            model_path=model_path,
-            load_detokenizer=True,
-        )
-    else:
-        print(f"Loading model from {model_path}...")
-        model = KimiAudio(model_path=model_path, load_detokenizer=False)
+    model = KimiAudio(model_path=model_path, load_detokenizer=False)
     print("Model loaded successfully!")
     
     # 采样参数
@@ -149,4 +139,4 @@ def main(model_pretrained=True):
     print("\nBatch inference completed!")
 
 if __name__ == "__main__":
-    main(False)
+    main()
