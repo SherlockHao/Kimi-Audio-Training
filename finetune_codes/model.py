@@ -46,19 +46,50 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
         return kimia_model
     
     @staticmethod
-    def export_model(input_dir, output_dir):
-        print("Loading model from {}".format(input_dir))
-        kimiaudio = KimiAudioModel.from_pretrained(input_dir)
+    def export_model(input_dir, output_dir, checkpoint=None):
+        # 如果指定了checkpoint，构建完整路径
+        if checkpoint:
+            model_path = os.path.join(input_dir, checkpoint)
+            if not os.path.exists(model_path):
+                raise ValueError(f"Checkpoint path does not exist: {model_path}")
+            print(f"Loading model from checkpoint: {model_path}")
+        else:
+            model_path = input_dir
+            print(f"Loading model from: {model_path}")
+        
+        # 检查是否存在可用的checkpoint
+        if not checkpoint and os.path.exists(input_dir):
+            # 列出所有可能的checkpoint目录
+            checkpoints = [d for d in os.listdir(input_dir) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(input_dir, d))]
+            if checkpoints:
+                print(f"Found checkpoints: {checkpoints}")
+                print(f"To export a specific checkpoint, use --checkpoint flag")
+                # 如果没有指定checkpoint但存在checkpoint目录，使用最新的checkpoint
+                if not any(f in os.listdir(input_dir) for f in ['pytorch_model.bin', 'model.safetensors', 'adapter_model.bin']):
+                    # 按数字排序获取最新的checkpoint
+                    checkpoints_sorted = sorted(checkpoints, key=lambda x: int(x.split('-')[-1]))
+                    model_path = os.path.join(input_dir, checkpoints_sorted[-1])
+                    print(f"Using latest checkpoint: {checkpoints_sorted[-1]}")
+        
+        kimiaudio = KimiAudioModel.from_pretrained(model_path)
 
-        print("Saving Kimi-Audio LM to {}".format(output_dir))
+        # 如果指定了checkpoint，在output_dir中创建对应的子目录
+        if checkpoint:
+            output_path = os.path.join(output_dir, checkpoint)
+        else:
+            output_path = output_dir
+        
+        os.makedirs(output_path, exist_ok=True)
+        print(f"Saving Kimi-Audio LM to {output_path}")
+        
         audio_model = MoonshotKimiaForCausalLM(kimiaudio.config)
         audio_model_state_dict = {k: v for k, v in kimiaudio.state_dict().items() if not k.startswith("whisper_model")}
         audio_model.load_state_dict(audio_model_state_dict)
 
-        audio_model.save_pretrained(output_dir)
+        audio_model.save_pretrained(output_path)
 
-        shutil.copyfile("finetune_codes/configuration_moonshot_kimia.py", os.path.join(output_dir, "configuration_moonshot_kimia.py"))
-        shutil.copyfile("finetune_codes/modeling_kimia.py", os.path.join(output_dir, "modeling_moonshot_kimia.py"))
+        shutil.copyfile("finetune_codes/configuration_moonshot_kimia.py", os.path.join(output_path, "configuration_moonshot_kimia.py"))
+        shutil.copyfile("finetune_codes/modeling_kimia.py", os.path.join(output_path, "modeling_moonshot_kimia.py"))
 
         from kimia_infer.models.tokenizer.whisper_Lv3.whisper import WhisperModel
 
@@ -72,9 +103,9 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
         for k in missing_keys:
             assert k.startswith("decoder"), f"Missing keys: {k}"
 
-        whisper_model.save_pretrained(os.path.join(output_dir, "whisper-large-v3"))
+        whisper_model.save_pretrained(os.path.join(output_path, "whisper-large-v3"))
 
-        print("Exported Kimi-Audio LM and Whisper model to {}".format(output_dir))
+        print(f"Exported Kimi-Audio LM and Whisper model to {output_path}")
 
 
     def forward(
@@ -122,19 +153,59 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="moonshotai/Kimi-Audio-7B")
-    parser.add_argument("--action", type=str, choices=["init_from_pretrained", "export_model"], default="init_from_pretrained")
+    parser.add_argument("--action", type=str, choices=["init_from_pretrained", "export_model", "export_all_checkpoints"], default="init_from_pretrained")
     parser.add_argument("--output_dir", type=str, default="output/pretrained_hf")
     parser.add_argument("--input_dir", type=str, default="output/finetuned_hf")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Specific checkpoint to export (e.g., checkpoint-1000)")
     args = parser.parse_args()
 
     if args.action == "init_from_pretrained":
-
         model = KimiAudioModel.init_from_pretrained(args.model_name, model_load_kwargs={})
-
         os.makedirs(args.output_dir, exist_ok=True)
         # save model
         model.save_pretrained(args.output_dir)
+    
     elif args.action == "export_model":
-        KimiAudioModel.export_model(args.input_dir, args.output_dir)
+        KimiAudioModel.export_model(args.input_dir, args.output_dir, checkpoint=args.checkpoint)
+    
+    elif args.action == "export_all_checkpoints":
+        # 批量导出所有checkpoint
+        if not os.path.exists(args.input_dir):
+            raise ValueError(f"Input directory does not exist: {args.input_dir}")
+        
+        checkpoints = [d for d in os.listdir(args.input_dir) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(args.input_dir, d))]
+        
+        if not checkpoints:
+            print("No checkpoints found. Exporting the main model.")
+            KimiAudioModel.export_model(args.input_dir, args.output_dir)
+        else:
+            print(f"Found {len(checkpoints)} checkpoints to export: {checkpoints}")
+            for checkpoint in sorted(checkpoints):
+                print(f"\nExporting {checkpoint}...")
+                try:
+                    KimiAudioModel.export_model(args.input_dir, args.output_dir, checkpoint=checkpoint)
+                except Exception as e:
+                    print(f"Failed to export {checkpoint}: {e}")
+    
     else:
         raise ValueError(f"Invalid action: {args.action}")
+    
+
+'''
+# 转换 checkpoint-1000
+CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
+    --model_name "moonshotai/Kimi-Audio-7B" \
+    --action "export_model" \
+    --input_dir "output/kimiaudio_ckpts" \
+    --checkpoint "checkpoint-1000" \
+    --output_dir "output/finetuned_hf_for_inference"
+
+# 批量
+CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
+    --model_name "moonshotai/Kimi-Audio-7B" \
+    --action "export_all_checkpoints" \
+    --input_dir "output/kimiaudio_ckpts" \
+    --output_dir "output/finetuned_hf_for_inference"
+
+
+'''
