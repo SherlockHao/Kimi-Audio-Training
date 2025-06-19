@@ -225,16 +225,7 @@ if __name__ == "__main__":
         raise ValueError(f"Invalid action: {args.action}") 
 
 '''
-# 转换特定的 checkpoint-100（自动从adapter_config.json读取base model路径）
-CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
-    --model_name "moonshotai/Kimi-Audio-7B" \
-    --action "export_model" \
-    --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
-    --checkpoint "checkpoint-100" \
-    --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model_test" \
-    --enable_lora
-
-# 转换特定的 checkpoint-100（手动指定base model路径）
+# 转换特定的 checkpoint-100
 CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
     --model_name "moonshotai/Kimi-Audio-7B" \
     --action "export_model" \
