@@ -5,6 +5,7 @@ import shutil
 import torch
 from transformers import AutoModelForCausalLM
 from huggingface_hub import snapshot_download
+from peft import PeftModel
 
 from kimia_infer.models.tokenizer.whisper_Lv3.whisper import WhisperEncoder
 from .modeling_kimia import MoonshotKimiaForCausalLM
@@ -45,34 +46,90 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
 
         return kimia_model
     
-    @staticmethod
-    def export_model(input_dir, output_dir, checkpoint=None):
-        # 如果指定了checkpoint，构建完整路径
-        if checkpoint:
-            model_path = os.path.join(input_dir, checkpoint)
-            if not os.path.exists(model_path):
-                raise ValueError(f"Checkpoint path does not exist: {model_path}")
-            print(f"Loading model from checkpoint: {model_path}")
+    @classmethod
+    def init_from_lora_pretrained(cls, base_model_name_or_path, lora_adapter_path, model_load_kwargs):
+        """加载基础模型并应用LoRA adapter"""
+        print(f"Loading base model from: {base_model_name_or_path}")
+        
+        # 首先加载基础模型
+        if os.path.exists(base_model_name_or_path):
+            cache_path = base_model_name_or_path
         else:
-            model_path = input_dir
-            print(f"Loading model from: {model_path}")
+            cache_path = snapshot_download(base_model_name_or_path)
         
-        # 检查是否存在可用的checkpoint
-        if not checkpoint and os.path.exists(input_dir):
-            # 列出所有可能的checkpoint目录
-            checkpoints = [d for d in os.listdir(input_dir) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(input_dir, d))]
-            if checkpoints:
-                print(f"Found checkpoints: {checkpoints}")
-                print(f"To export a specific checkpoint, use --checkpoint flag")
-                # 如果没有指定checkpoint但存在checkpoint目录，使用最新的checkpoint
-                if not any(f in os.listdir(input_dir) for f in ['pytorch_model.bin', 'model.safetensors', 'adapter_model.bin']):
-                    # 按数字排序获取最新的checkpoint
-                    checkpoints_sorted = sorted(checkpoints, key=lambda x: int(x.split('-')[-1]))
-                    model_path = os.path.join(input_dir, checkpoints_sorted[-1])
-                    print(f"Using latest checkpoint: {checkpoints_sorted[-1]}")
+        # 加载基础音频模型
+        audio_model = AutoModelForCausalLM.from_pretrained(
+            cache_path,
+            device_map=None,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            **model_load_kwargs,
+        )
         
-        kimiaudio = KimiAudioModel.from_pretrained(model_path)
-
+        # 加载并合并LoRA adapter
+        print(f"Loading LoRA adapter from: {lora_adapter_path}")
+        audio_model = PeftModel.from_pretrained(audio_model, lora_adapter_path)
+        
+        # 合并LoRA权重到基础模型
+        print("Merging LoRA weights into base model...")
+        audio_model = audio_model.merge_and_unload()
+        
+        # 加载Whisper模型
+        whisper_model = WhisperEncoder(
+            os.path.join(cache_path, "whisper-large-v3"), 
+            mel_batch_size=20, 
+            unfreeze_online_whisper_model=True
+        )
+        
+        # 创建KimiAudioModel实例
+        kimia_model = cls(audio_model.config)
+        
+        # 合并audio model和whisper model的state dict
+        pretrained_state_dict = audio_model.state_dict()
+        
+        for n, p in whisper_model.state_dict().items():
+            pretrained_state_dict["whisper_model." + n] = p
+        
+        kimia_model.load_state_dict(pretrained_state_dict)
+        
+        return kimia_model
+    
+    @staticmethod
+    def export_model(base_model_name, input_dir, output_dir, checkpoint=None, is_lora=True):
+        """
+        导出模型，支持LoRA checkpoint
+        
+        Args:
+            base_model_name: 基础模型名称或路径
+            input_dir: LoRA adapter保存的目录
+            output_dir: 输出目录
+            checkpoint: 特定的checkpoint名称
+            is_lora: 是否为LoRA模型
+        """
+        # 确定adapter路径
+        if checkpoint:
+            adapter_path = os.path.join(input_dir, checkpoint)
+            if not os.path.exists(adapter_path):
+                raise ValueError(f"Checkpoint path does not exist: {adapter_path}")
+            print(f"Using LoRA adapter from checkpoint: {adapter_path}")
+        else:
+            adapter_path = input_dir
+            print(f"Using LoRA adapter from: {adapter_path}")
+        
+        # 检查是否为LoRA训练（通过检查adapter_config.json）
+        adapter_config_path = os.path.join(adapter_path, "adapter_config.json")
+        if not os.path.exists(adapter_config_path) and not is_lora:
+            # 如果不是LoRA模型，使用原来的逻辑
+            print("No adapter_config.json found, treating as full model")
+            kimiaudio = KimiAudioModel.from_pretrained(adapter_path)
+        else:
+            # 使用LoRA加载方式
+            kimiaudio = KimiAudioModel.init_from_lora_pretrained(
+                base_model_name, 
+                adapter_path, 
+                model_load_kwargs={}
+            )
+        
         # 如果指定了checkpoint，在output_dir中创建对应的子目录
         if checkpoint:
             output_path = os.path.join(output_dir, checkpoint)
@@ -80,32 +137,39 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
             output_path = output_dir
         
         os.makedirs(output_path, exist_ok=True)
-        print(f"Saving Kimi-Audio LM to {output_path}")
+        print(f"Saving merged Kimi-Audio LM to {output_path}")
         
+        # 保存合并后的模型
         audio_model = MoonshotKimiaForCausalLM(kimiaudio.config)
         audio_model_state_dict = {k: v for k, v in kimiaudio.state_dict().items() if not k.startswith("whisper_model")}
         audio_model.load_state_dict(audio_model_state_dict)
-
+        
         audio_model.save_pretrained(output_path)
-
+        
+        # 复制必要的文件
         shutil.copyfile("finetune_codes/configuration_moonshot_kimia.py", os.path.join(output_path, "configuration_moonshot_kimia.py"))
         shutil.copyfile("finetune_codes/modeling_kimia.py", os.path.join(output_path, "modeling_moonshot_kimia.py"))
-
+        
+        # 保存Whisper模型
         from kimia_infer.models.tokenizer.whisper_Lv3.whisper import WhisperModel
-
+        
         whisper_model = WhisperModel.from_pretrained("openai/whisper-large-v3")
-
-        kimiaudio_whisper_encoder_state_dict = {k.replace("speech_encoder.", "encoder."): v for k, v in kimiaudio.whisper_model.state_dict().items() if k.startswith("speech_encoder")}
-
+        
+        kimiaudio_whisper_encoder_state_dict = {
+            k.replace("speech_encoder.", "encoder."): v 
+            for k, v in kimiaudio.whisper_model.state_dict().items() 
+            if k.startswith("speech_encoder")
+        }
+        
         missing_keys, unexpected_keys = whisper_model.load_state_dict(kimiaudio_whisper_encoder_state_dict, strict=False)
         assert len(unexpected_keys) == 0, f"Unexpected keys: {unexpected_keys}"
-
+        
         for k in missing_keys:
             assert k.startswith("decoder"), f"Missing keys: {k}"
-
+        
         whisper_model.save_pretrained(os.path.join(output_path, "whisper-large-v3"))
-
-        print(f"Exported Kimi-Audio LM and Whisper model to {output_path}")
+        
+        print(f"Successfully exported merged Kimi-Audio LM and Whisper model to {output_path}")
 
 
     def forward(
@@ -152,60 +216,91 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="moonshotai/Kimi-Audio-7B")
-    parser.add_argument("--action", type=str, choices=["init_from_pretrained", "export_model", "export_all_checkpoints"], default="init_from_pretrained")
+    parser.add_argument("--model_name", type=str, default="moonshotai/Kimi-Audio-7B", 
+                        help="Base model name or path for LoRA finetuning")
+    parser.add_argument("--action", type=str, 
+                        choices=["init_from_pretrained", "export_model", "export_all_checkpoints"], 
+                        default="init_from_pretrained")
     parser.add_argument("--output_dir", type=str, default="output/pretrained_hf")
-    parser.add_argument("--input_dir", type=str, default="output/finetuned_hf")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Specific checkpoint to export (e.g., checkpoint-1000)")
+    parser.add_argument("--input_dir", type=str, default="output/finetuned_hf", 
+                        help="Directory containing LoRA adapters")
+    parser.add_argument("--checkpoint", type=str, default=None, 
+                        help="Specific checkpoint to export (e.g., checkpoint-1000)")
+    parser.add_argument("--is_lora", type=bool, default=True,
+                        help="Whether the model is LoRA finetuned")
     args = parser.parse_args()
 
     if args.action == "init_from_pretrained":
         model = KimiAudioModel.init_from_pretrained(args.model_name, model_load_kwargs={})
         os.makedirs(args.output_dir, exist_ok=True)
-        # save model
         model.save_pretrained(args.output_dir)
     
     elif args.action == "export_model":
-        KimiAudioModel.export_model(args.input_dir, args.output_dir, checkpoint=args.checkpoint)
+        KimiAudioModel.export_model(
+            args.model_name, 
+            args.input_dir, 
+            args.output_dir, 
+            checkpoint=args.checkpoint,
+            is_lora=args.is_lora
+        )
     
     elif args.action == "export_all_checkpoints":
-        # 批量导出所有checkpoint
+        # 批量导出所有LoRA checkpoint
         if not os.path.exists(args.input_dir):
             raise ValueError(f"Input directory does not exist: {args.input_dir}")
         
-        checkpoints = [d for d in os.listdir(args.input_dir) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(args.input_dir, d))]
+        checkpoints = [d for d in os.listdir(args.input_dir) 
+                      if d.startswith("checkpoint-") and os.path.isdir(os.path.join(args.input_dir, d))]
         
         if not checkpoints:
-            print("No checkpoints found. Exporting the main model.")
-            KimiAudioModel.export_model(args.input_dir, args.output_dir)
+            print("No checkpoints found. Exporting the main model adapter.")
+            KimiAudioModel.export_model(
+                args.model_name,
+                args.input_dir, 
+                args.output_dir,
+                is_lora=args.is_lora
+            )
         else:
             print(f"Found {len(checkpoints)} checkpoints to export: {checkpoints}")
-            for checkpoint in sorted(checkpoints):
-                print(f"\nExporting {checkpoint}...")
+            # 按数字排序
+            checkpoints_sorted = sorted(checkpoints, key=lambda x: int(x.split('-')[-1]))
+            
+            for checkpoint in checkpoints_sorted:
+                print(f"\n{'='*60}")
+                print(f"Exporting {checkpoint}...")
+                print(f"{'='*60}")
                 try:
-                    KimiAudioModel.export_model(args.input_dir, args.output_dir, checkpoint=checkpoint)
+                    KimiAudioModel.export_model(
+                        args.model_name,
+                        args.input_dir, 
+                        args.output_dir, 
+                        checkpoint=checkpoint,
+                        is_lora=args.is_lora
+                    )
+                    print(f"✓ Successfully exported {checkpoint}")
                 except Exception as e:
-                    print(f"Failed to export {checkpoint}: {e}")
+                    print(f"✗ Failed to export {checkpoint}: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     else:
         raise ValueError(f"Invalid action: {args.action}")
     
 
 '''
-# 转换 checkpoint-1000
+# 转换 checkpoint-100
 CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
     --model_name "moonshotai/Kimi-Audio-7B" \
     --action "export_model" \
-    --input_dir "output/kimiaudio_ckpts" \
-    --checkpoint "checkpoint-1000" \
-    --output_dir "output/finetuned_hf_for_inference"
+    --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
+    --checkpoint "checkpoint-100" \
+    --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model_test"
 
 # 批量
+# 批量导出所有LoRA checkpoints
 CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
     --model_name "moonshotai/Kimi-Audio-7B" \
     --action "export_all_checkpoints" \
-    --input_dir "output/kimiaudio_ckpts" \
-    --output_dir "output/finetuned_hf_for_inference"
-
-
+    --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
+    --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model"
 '''
