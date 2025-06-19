@@ -5,7 +5,6 @@ import shutil
 import torch
 from transformers import AutoModelForCausalLM
 from huggingface_hub import snapshot_download
-from peft import PeftModel
 
 from kimia_infer.models.tokenizer.whisper_Lv3.whisper import WhisperEncoder
 from .modeling_kimia import MoonshotKimiaForCausalLM
@@ -49,6 +48,9 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
     @classmethod
     def init_from_lora_pretrained(cls, base_model_name_or_path, lora_adapter_path, model_load_kwargs):
         """加载基础模型并应用LoRA adapter"""
+        import json
+        from peft import LoraConfig, TaskType, get_peft_model
+        
         print(f"Loading base model from: {base_model_name_or_path}")
         
         # 首先加载基础模型
@@ -66,13 +68,90 @@ class KimiAudioModel(MoonshotKimiaForCausalLM):
             **model_load_kwargs,
         )
         
-        # 加载并合并LoRA adapter
-        print(f"Loading LoRA adapter from: {lora_adapter_path}")
-        audio_model = PeftModel.from_pretrained(audio_model, lora_adapter_path)
+        # 读取LoRA配置
+        adapter_config_path = os.path.join(lora_adapter_path, "adapter_config.json")
+        with open(adapter_config_path, 'r') as f:
+            adapter_config = json.load(f)
         
-        # 合并LoRA权重到基础模型
-        print("Merging LoRA weights into base model...")
-        audio_model = audio_model.merge_and_unload()
+        # 创建LoRA配置
+        lora_config = LoraConfig(
+            r=adapter_config.get("r", 16),
+            lora_alpha=adapter_config.get("lora_alpha", 32),
+            target_modules=adapter_config.get("target_modules", ["q_proj", "v_proj"]),
+            lora_dropout=adapter_config.get("lora_dropout", 0.1),
+            bias=adapter_config.get("bias", "none"),
+            task_type=TaskType.CAUSAL_LM,
+        )
+        
+        # 方法1：尝试使用get_peft_model，然后手动加载权重
+        try:
+            # 获取PEFT模型
+            audio_model = get_peft_model(audio_model, lora_config)
+            
+            # 手动加载LoRA权重
+            adapter_model_path = os.path.join(lora_adapter_path, "adapter_model.safetensors")
+            if os.path.exists(adapter_model_path):
+                from safetensors.torch import load_file
+                lora_state_dict = load_file(adapter_model_path)
+            else:
+                adapter_model_path = os.path.join(lora_adapter_path, "adapter_model.bin")
+                lora_state_dict = torch.load(adapter_model_path, map_location="cpu")
+            
+            # 加载权重
+            audio_model.load_state_dict(lora_state_dict, strict=False)
+            
+            # 合并LoRA权重
+            print("Merging LoRA weights into base model...")
+            audio_model = audio_model.merge_and_unload()
+            
+        except Exception as e:
+            print(f"Method 1 failed: {e}")
+            print("Trying alternative method...")
+            
+            # 方法2：直接手动合并权重
+            # 重新加载基础模型
+            audio_model = AutoModelForCausalLM.from_pretrained(
+                cache_path,
+                device_map=None,
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True,
+                **model_load_kwargs,
+            )
+            
+            # 加载LoRA权重
+            adapter_model_path = os.path.join(lora_adapter_path, "adapter_model.safetensors")
+            if os.path.exists(adapter_model_path):
+                from safetensors.torch import load_file
+                lora_state_dict = load_file(adapter_model_path)
+            else:
+                adapter_model_path = os.path.join(lora_adapter_path, "adapter_model.bin")
+                lora_state_dict = torch.load(adapter_model_path, map_location="cpu")
+            
+            # 手动合并LoRA权重到基础模型
+            base_model_state_dict = audio_model.state_dict()
+            
+            # 合并LoRA权重
+            for key in lora_state_dict:
+                if "lora_A" in key:
+                    # 获取对应的lora_B key
+                    lora_B_key = key.replace("lora_A", "lora_B")
+                    if lora_B_key in lora_state_dict:
+                        # 获取基础模型的对应权重名称
+                        base_key = key.replace(".lora_A.weight", ".weight")
+                        base_key = base_key.replace("base_model.model.", "")
+                        
+                        if base_key in base_model_state_dict:
+                            # 计算LoRA更新: W = W_base + (lora_B @ lora_A) * scaling
+                            lora_A = lora_state_dict[key]
+                            lora_B = lora_state_dict[lora_B_key]
+                            scaling = adapter_config.get("lora_alpha", 32) / adapter_config.get("r", 16)
+                            
+                            # 执行矩阵乘法并添加到基础权重
+                            update = torch.matmul(lora_B, lora_A) * scaling
+                            base_model_state_dict[base_key] = base_model_state_dict[base_key] + update
+            
+            # 更新模型权重
+            audio_model.load_state_dict(base_model_state_dict)
         
         # 加载Whisper模型
         whisper_model = WhisperEncoder(
@@ -284,8 +363,7 @@ if __name__ == "__main__":
                     traceback.print_exc()
     
     else:
-        raise ValueError(f"Invalid action: {args.action}")
-    
+        raise ValueError(f"Invalid action: {args.action}")    
 
 '''
 # 转换 checkpoint-100
