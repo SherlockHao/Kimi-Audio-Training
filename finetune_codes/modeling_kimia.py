@@ -906,11 +906,11 @@ class MoonshotKimiaForCausalLM(Qwen2PreTrainedModel):
         text_logits = self.mimo_output(mimo_hidden_states)
 
         if not return_dict:
-            output = (text_logits, audio_logits) + outputs[2:]
+            output = (audio_logits, text_logits) + outputs[2:]
             return output
         return CausalLMOutputWithPast(
             loss=None,
-            logits=(text_logits, audio_logits),
+            logits=(audio_logits, text_logits),
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
