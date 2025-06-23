@@ -206,6 +206,35 @@ def make_supervised_data_module(
 
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
 
+def compute_repetition_penalty(logits, labels, mask, n_gram_sizes=[2, 3, 4], penalty_weight=0.1):
+    """
+    计算n-gram重复惩罚
+    """
+    batch_size, seq_len, vocab_size = logits.shape
+    penalty = torch.tensor(0.0, device=logits.device)
+    
+    # 获取预测的token ids
+    predicted_ids = torch.argmax(logits, dim=-1)  # [batch, seq_len]
+    
+    for n in n_gram_sizes:
+        if seq_len <= n:
+            continue
+            
+        for i in range(seq_len - n):
+            if not mask[0, i:i+n].all():  # 跳过包含padding的n-gram
+                continue
+                
+            # 检查当前n-gram是否在之前出现过
+            current_ngram = predicted_ids[0, i:i+n]
+            
+            for j in range(max(0, i-50), i):  # 只检查前50个token，避免计算量过大
+                if torch.equal(predicted_ids[0, j:j+n], current_ngram):
+                    # 对重复的n-gram施加惩罚
+                    penalty += penalty_weight * n  # n越大，惩罚越重
+                    break
+    
+    return penalty
+
 def compute_loss(outputs, labels, num_items_in_batch=None):
     audio_logits, text_logits = outputs.logits
     audio_labels, text_labels, audio_loss_mask, text_loss_mask = labels
@@ -215,8 +244,17 @@ def compute_loss(outputs, labels, num_items_in_batch=None):
     text_loss = torch.nn.functional.cross_entropy(text_logits.view(-1, text_logits.shape[-1]), text_labels.view(-1), reduction="none")
 
     audio_loss = (audio_loss * audio_loss_mask.view(-1)).sum() / (audio_loss_mask.view(-1).sum() + 1e-4)
-    text_loss = (text_loss * text_loss_mask.view(-1)).sum() / (text_loss_mask.view(-1).sum() + 1e-4)
-    loss = audio_loss + text_loss
+    text_loss_base = (text_loss * text_loss_mask.view(-1)).sum() / (text_loss_mask.view(-1).sum() + 1e-4)
+
+    # 重复惩罚 (Repetition Penalty)
+    repetition_penalty = compute_repetition_penalty(
+        text_logits, text_labels, text_loss_mask, 
+        n_gram_sizes=[2, 3, 4], 
+        penalty_weight=0.1
+    )
+
+    text_loss_total = text_loss_base + repetition_penalty
+    loss = audio_loss + text_loss_total
     return loss
 
 def train():

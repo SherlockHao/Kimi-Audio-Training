@@ -68,7 +68,7 @@ class KimiAudioModel(MoonshotKimiaForCausalLM, GenerationMixin):
                 if not os.path.exists(os.path.join(lora_path, "adapter_config.json")):
                     raise ValueError(f"Cannot find adapter_config.json in {lora_path}")
             
-            base_model_path = "moonshotai/Kimi-Audio-7B"
+            base_model_path = "moonshotai/Kimi-Audio-7B-Instruct"
         else:
             # Not using LoRA, load full model directly
             base_model_path = input_dir
@@ -227,7 +227,7 @@ if __name__ == "__main__":
 '''
 # 转换特定的 checkpoint-100
 CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
-    --model_name "moonshotai/Kimi-Audio-7B" \
+    --model_name "moonshotai/Kimi-Audio-7B-Instruct" \
     --action "export_model" \
     --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
     --checkpoint "checkpoint-100" \
@@ -236,7 +236,7 @@ CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
 
 # 批量导出所有LoRA checkpoints
 CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
-    --model_name "moonshotai/Kimi-Audio-7B" \
+    --model_name "moonshotai/Kimi-Audio-7B-Instruct" \
     --action "export_all_checkpoints" \
     --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
     --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model" \
