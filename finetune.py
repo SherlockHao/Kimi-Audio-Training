@@ -86,6 +86,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
             state_dict = trainer.model.state_dict()
     if trainer.args.should_save and trainer.args.local_rank == 0:
         trainer._save(output_dir, state_dict=state_dict)
+        print(f"Save model dir: {output_dir}")
 
 def safe_save_model_for_hf_trainer2(
     trainer: transformers.Trainer, 
@@ -186,9 +187,19 @@ def make_supervised_data_module(
     dataset_cls = LazySupervisedDataset
     rank0_print("Loading data...")
 
-    with open(data_args.data_path, "r") as f:
-        lines = f.readlines()
-        all_data = [json.loads(line) for line in lines]
+    # 支持多文件读取
+    all_data = []
+    data_paths = [path.strip() for path in data_args.data_path.split(",")]
+
+    for data_path in data_paths:
+        rank0_print(f"Loading data from: {data_path}")
+        with open(data_path, "r") as f:
+            lines = f.readlines()
+            file_data = [json.load(line) for line in lines]
+            all_data.extend(file_data)
+            rank0_print(f"Load {len(file_data)} samples from {data_path}")
+
+    rank0_print(f"Total samples loaded: {len(all_data)}")
 
     if data_args.eval_ratio > 0:
         eval_data = all_data[:int(len(all_data) * data_args.eval_ratio)]
@@ -377,7 +388,7 @@ def train():
             if lora_args.q_lora:
                 modules_to_save = None
             else:
-                modules_to_save = None #["wte" "lm_head"]
+                modules_to_save = lora_args.modules_to_save #["wte" "lm_head"]
         if (
             training_args.use_lora
             and not lora_args.q_lora
@@ -422,70 +433,84 @@ def train():
         **data_module
     )
 
-    trainer.train()
+    #trainer.train()
+    checkpoint = None
+    if os.path.isdir(training_args.output_dir):
+        checkpoints = [d for d in os.listdir(training_args.output_dir)
+                        if d.startswith("checkpoint-")]
+        if checkpoints:
+            checkpoint = os.path.join(training_args.output_dir,
+                                        max(checkpoints, key=lambda x: int(x.split("-")[1])))
+            print(f"Found and resume from checkpoint: {checkpoint}")
+    
+    #开始训练
+    trainer.train(resume_from_checkpoint=checkpoint)
+            
+
+
     trainer.save_state()
 
 
-    # 统一的模型保存逻辑
-    if training_args.use_lora:
-        # LoRA模型保存策略
-        if lora_args.save_strategy == "lora_only":
-            # 只保存LoRA权重
-            safe_save_model_for_hf_trainer(
-                trainer=trainer,
-                output_dir=os.path.join(training_args.output_dir, "lora_weights"),
-                bias=lora_args.lora_bias,
-                save_lora_only=True,
-                merge_lora=False,
-                lora_args=lora_args
-            )
-        elif lora_args.save_strategy == "merged":
-            # 保存合并后的模型
-            safe_save_model_for_hf_trainer(
-                trainer=trainer,
-                output_dir=os.path.join(training_args.output_dir, "merged_model"),
-                bias=lora_args.lora_bias,
-                save_lora_only=False,
-                merge_lora=True,
-                lora_args=lora_args
-            )
-        elif lora_args.save_strategy == "both":
-            # 同时保存LoRA权重和合并后的模型
-            # 1. 保存LoRA权重
-            safe_save_model_for_hf_trainer(
-                trainer=trainer,
-                output_dir=os.path.join(training_args.output_dir, "lora_weights"),
-                bias=lora_args.lora_bias,
-                save_lora_only=True,
-                merge_lora=False,
-                lora_args=lora_args
-            )
-            # 2. 保存合并后的模型
-            safe_save_model_for_hf_trainer(
-                trainer=trainer,
-                output_dir=os.path.join(training_args.output_dir, "merged_model"),
-                bias=lora_args.lora_bias,
-                save_lora_only=False,
-                merge_lora=True,
-                lora_args=lora_args
-            )
-        else:
-            # 默认：保存完整的PEFT模型
-            safe_save_model_for_hf_trainer(
-                trainer=trainer,
-                output_dir=training_args.output_dir,
-                bias=lora_args.lora_bias,
-                save_lora_only=False,
-                merge_lora=False,
-                lora_args=lora_args
-            )
-    else:
-        # 普通模型保存
-        safe_save_model_for_hf_trainer(
-            trainer=trainer,
-            output_dir=training_args.output_dir,
-            bias="none"
-        )
+    # # 统一的模型保存逻辑
+    # if training_args.use_lora:
+    #     # LoRA模型保存策略
+    #     if lora_args.lora_save_strategy == "lora_only":
+    #         # 只保存LoRA权重
+    #         safe_save_model_for_hf_trainer(
+    #             trainer=trainer,
+    #             output_dir=os.path.join(training_args.output_dir, "lora_weights"),
+    #             bias=lora_args.lora_bias,
+    #             save_lora_only=True,
+    #             merge_lora=False,
+    #             lora_args=lora_args
+    #         )
+    #     elif lora_args.lora_save_strategy == "merged":
+    #         # 保存合并后的模型
+    #         safe_save_model_for_hf_trainer(
+    #             trainer=trainer,
+    #             output_dir=os.path.join(training_args.output_dir, "merged_model"),
+    #             bias=lora_args.lora_bias,
+    #             save_lora_only=False,
+    #             merge_lora=True,
+    #             lora_args=lora_args
+    #         )
+    #     elif lora_args.lora_save_strategy == "both":
+    #         # 同时保存LoRA权重和合并后的模型
+    #         # 1. 保存LoRA权重
+    #         safe_save_model_for_hf_trainer(
+    #             trainer=trainer,
+    #             output_dir=os.path.join(training_args.output_dir, "lora_weights"),
+    #             bias=lora_args.lora_bias,
+    #             save_lora_only=True,
+    #             merge_lora=False,
+    #             lora_args=lora_args
+    #         )
+    #         # 2. 保存合并后的模型
+    #         safe_save_model_for_hf_trainer(
+    #             trainer=trainer,
+    #             output_dir=os.path.join(training_args.output_dir, "merged_model"),
+    #             bias=lora_args.lora_bias,
+    #             save_lora_only=False,
+    #             merge_lora=True,
+    #             lora_args=lora_args
+    #         )
+    #     else:
+    #         # 默认：保存完整的PEFT模型
+    #         safe_save_model_for_hf_trainer(
+    #             trainer=trainer,
+    #             output_dir=training_args.output_dir,
+    #             bias=lora_args.lora_bias,
+    #             save_lora_only=False,
+    #             merge_lora=False,
+    #             lora_args=lora_args
+    #         )
+    # else:
+    # 普通模型保存，LoRA模型情况下export_model需要设置 --enable_lora
+    safe_save_model_for_hf_trainer(
+        trainer=trainer,
+        output_dir=training_args.output_dir,
+        bias=lora_args.lora_bias
+    )
 
 if __name__ == "__main__":
     train()

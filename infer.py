@@ -4,14 +4,17 @@ import soundfile as sf
 import argparse
 import json
 
+os.environ["HF_HOME"] = "/team/shared/huggingface"
+os.environ["TRANSFORMERS_CACHE"] = "/team/shared/huggingface/hub"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, default="/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora7/export_model")
+    parser.add_argument("--model_path", type=str, default="moonshotai/Kimi-Audio-7B-Instruct")
     args = parser.parse_args()
 
     model = KimiAudio(
         model_path=args.model_path,
-        load_detokenizer=True,
+        load_detokenizer=False,
     )
 
     sampling_params = {

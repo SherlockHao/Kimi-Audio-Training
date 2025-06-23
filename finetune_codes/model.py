@@ -46,47 +46,15 @@ class KimiAudioModel(MoonshotKimiaForCausalLM, GenerationMixin):
         return kimia_model
     
     @staticmethod
-    def export_model(input_dir, output_dir, enable_lora=False, checkpoint=None):
+    def export_model(input_dir, output_dir, enable_lora=False):
         print("Loading model from {}".format(input_dir))
-        
-        # Determine paths for base model and LoRA weights
-        if enable_lora:
-            # Set LoRA path
-            if checkpoint:
-                # Check if checkpoint is provided as a subdirectory
-                potential_lora_path = os.path.join(input_dir, checkpoint)
-                if os.path.exists(potential_lora_path) and os.path.exists(os.path.join(potential_lora_path, "adapter_config.json")):
-                    lora_path = potential_lora_path
-                elif os.path.exists(os.path.join(input_dir, "adapter_config.json")):
-                    # input_dir is already the checkpoint directory
-                    lora_path = input_dir
-                else:
-                    raise ValueError(f"Cannot find LoRA adapter files in {input_dir} or {potential_lora_path}")
-            else:
-                # No specific checkpoint, use input_dir
-                lora_path = input_dir
-                if not os.path.exists(os.path.join(lora_path, "adapter_config.json")):
-                    raise ValueError(f"Cannot find adapter_config.json in {lora_path}")
-            
-            base_model_path = "moonshotai/Kimi-Audio-7B-Instruct"
-        else:
-            # Not using LoRA, load full model directly
-            base_model_path = input_dir
-            lora_path = None
-        
-        # Load the model
-        if enable_lora:
-            # For LoRA, we need to load the base model using init_from_pretrained
-            kimiaudio = KimiAudioModel.init_from_pretrained(base_model_path, model_load_kwargs={})
-        else:
-            # For full model, use from_pretrained
-            kimiaudio = KimiAudioModel.from_pretrained(input_dir)
+        kimiaudio = KimiAudioModel.from_pretrained(input_dir)
 
         if enable_lora:
             from peft import PeftModel
-            kimiaudio = PeftModel.from_pretrained(kimiaudio, lora_path)
+            kimiaudio = PeftModel.from_pretrained(kimiaudio, input_dir)
             kimiaudio = kimiaudio.merge_and_unload()
-            print(f"Successfully loaded and merged LoRA weights from {lora_path}")
+            print("Merge and Unload Lora ...")
 
         print("Saving Kimi-Audio LM to {}".format(output_dir))
         audio_model = MoonshotKimiaForCausalLM(kimiaudio.config)
@@ -94,6 +62,8 @@ class KimiAudioModel(MoonshotKimiaForCausalLM, GenerationMixin):
         audio_model.load_state_dict(audio_model_state_dict)
 
         audio_model.save_pretrained(output_dir)
+
+        print(audio_model_state_dict)
 
         shutil.copyfile("finetune_codes/configuration_moonshot_kimia.py", os.path.join(output_dir, "configuration_moonshot_kimia.py"))
         shutil.copyfile("finetune_codes/modeling_kimia.py", os.path.join(output_dir, "modeling_moonshot_kimia.py"))
@@ -114,40 +84,6 @@ class KimiAudioModel(MoonshotKimiaForCausalLM, GenerationMixin):
 
         print("Exported Kimi-Audio LM and Whisper model to {}".format(output_dir))
 
-    @staticmethod
-    def export_all_checkpoints(input_dir, output_dir, enable_lora=True):
-        """Export all checkpoints found in the input directory."""
-        checkpoints = []
-        
-        # Find all checkpoint directories
-        for item in os.listdir(input_dir):
-            if item.startswith("checkpoint-") and os.path.isdir(os.path.join(input_dir, item)):
-                checkpoints.append(item)
-        
-        if not checkpoints:
-            print(f"No checkpoints found in {input_dir}")
-            return
-        
-        checkpoints.sort(key=lambda x: int(x.split("-")[1]))
-        print(f"Found {len(checkpoints)} checkpoints: {checkpoints}")
-        
-        for checkpoint in checkpoints:
-            checkpoint_output_dir = os.path.join(output_dir, checkpoint)
-            print(f"\n{'='*50}")
-            print(f"Exporting {checkpoint}...")
-            print(f"{'='*50}")
-            
-            try:
-                KimiAudioModel.export_model(
-                    input_dir=input_dir,
-                    output_dir=checkpoint_output_dir,
-                    enable_lora=enable_lora,
-                    checkpoint=checkpoint
-                )
-                print(f"Successfully exported {checkpoint}")
-            except Exception as e:
-                print(f"Failed to export {checkpoint}: {str(e)}")
-                continue
 
     def forward(
         self,
@@ -193,52 +129,21 @@ class KimiAudioModel(MoonshotKimiaForCausalLM, GenerationMixin):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="moonshotai/Kimi-Audio-7B")
-    parser.add_argument("--action", type=str, choices=["init_from_pretrained", "export_model", "export_all_checkpoints"], 
-                        default="init_from_pretrained")
+    parser.add_argument("--model_name", type=str, default="moonshotai/Kimi-Audio-7B-Instruct")
+    parser.add_argument("--action", type=str, choices=["init_from_pretrained", "export_model"], default="init_from_pretrained")
     parser.add_argument("--output_dir", type=str, default="output/pretrained_hf")
     parser.add_argument("--input_dir", type=str, default="output/finetuned_hf")
-    parser.add_argument("--enable_lora", action="store_true", help="Enable LoRA model loading")
-    parser.add_argument("--checkpoint", type=str, default=None, 
-                        help="Specific checkpoint to export (e.g., checkpoint-100)")
+    parser.add_argument("--enable_lora", type=bool, action="store_true")
     args = parser.parse_args()
 
     if args.action == "init_from_pretrained":
+
         model = KimiAudioModel.init_from_pretrained(args.model_name, model_load_kwargs={})
+
         os.makedirs(args.output_dir, exist_ok=True)
         # save model
         model.save_pretrained(args.output_dir)
     elif args.action == "export_model":
-        KimiAudioModel.export_model(
-            args.input_dir, 
-            args.output_dir, 
-            args.enable_lora,
-            args.checkpoint
-        )
-    elif args.action == "export_all_checkpoints":
-        KimiAudioModel.export_all_checkpoints(
-            args.input_dir,
-            args.output_dir,
-            args.enable_lora
-        )
+        KimiAudioModel.export_model(args.input_dir, args.output_dir, args.enable_lora)
     else:
-        raise ValueError(f"Invalid action: {args.action}") 
-
-'''
-# 转换特定的 checkpoint-100
-CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
-    --model_name "moonshotai/Kimi-Audio-7B-Instruct" \
-    --action "export_model" \
-    --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
-    --checkpoint "checkpoint-100" \
-    --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model_test" \
-    --enable_lora
-
-# 批量导出所有LoRA checkpoints
-CUDA_VISIBLE_DEVICES=0 python -m finetune_codes.model \
-    --model_name "moonshotai/Kimi-Audio-7B-Instruct" \
-    --action "export_all_checkpoints" \
-    --input_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7" \
-    --output_dir "/team/shared/kimi-audio-training-result/train_model_output/wushen/output/kimiaudio_lora_7/export_model" \
-    --enable_lora
-'''
+        raise ValueError(f"Invalid action: {args.action}")
