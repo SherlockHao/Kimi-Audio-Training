@@ -305,7 +305,7 @@ def compute_loss(outputs, labels, num_items_in_batch=None):
     loss = audio_loss + text_loss_total
 
     #打印出来观察一下惩罚项的大小
-    print(f"CE Loss: {text_loss_base.item():.4f}, Repetition Penalty: {unlikelihood_penalty.item():.4f}")
+    print(f"CE Loss: {text_loss_base.item():.4f}, Repetition Penalty: {unlikelihood_penalty.item():.4f}, Length of current text_logits: {text_logits.shape[1]}")
     
     return loss
 

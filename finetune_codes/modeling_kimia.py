@@ -902,8 +902,8 @@ class MoonshotKimiaForCausalLM(Qwen2PreTrainedModel):
         else:
             hidden_states, mimo_hidden_states = outputs[0], outputs[1]
 
-        audio_logits = self.lm_head(hidden_states)
-        text_logits = self.mimo_output(mimo_hidden_states)
+        text_logits = self.lm_head(hidden_states)
+        audio_logits = self.mimo_output(mimo_hidden_states)
 
         if not return_dict:
             output = (audio_logits, text_logits) + outputs[2:]
