@@ -195,7 +195,7 @@ def make_supervised_data_module(
         rank0_print(f"Loading data from: {data_path}")
         with open(data_path, "r") as f:
             lines = f.readlines()
-            file_data = [json.load(line) for line in lines]
+            file_data = [json.loads(line) for line in lines]
             all_data.extend(file_data)
             rank0_print(f"Load {len(file_data)} samples from {data_path}")
 
