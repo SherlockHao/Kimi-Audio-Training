@@ -219,76 +219,6 @@ def make_supervised_data_module(
 
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
 
-def compute_unlikelihood_penalty(logits, labels, mask, window_size=5, penalty_weight=0.1):
-    """
-    计算可微分的n-gram重复惩罚 (基于Unlikelihood Training思想)
-    
-    Args:
-        logits (torch.Tensor): 模型的原始输出 [batch, seq_len, vocab_size]
-        labels (torch.Tensor): 真实标签 [batch, seq_len]
-        mask (torch.Tensor): 损失掩码 [batch, seq_len]
-        window_size (int):  回顾窗口大小，即惩罚最近多少个token的重复
-        penalty_weight (float): 惩罚项的权重
-        
-    Returns:
-        torch.Tensor: 一个标量的惩罚损失
-    """
-    # 我们仅在batch_size=1的情况下实现，与你的compute_loss保持一致
-    if logits.size(0) != 1:
-        # 在多batch size下需要更复杂的padding和mask处理，这里简化
-        return torch.tensor(0.0, device=logits.device)
-        
-    batch_size, seq_len, vocab_size = logits.shape
-    
-    # 1. 将logits转换为概率分布
-    # 使用log_softmax更稳定，因为我们要计算log(1-p)
-    log_probs = F.log_softmax(logits, dim=-1)
-    
-    total_penalty = torch.tensor(0.0, device=logits.device)
-    num_penalized_tokens = 0
-
-    # 2. 遍历序列，从第window_size个token开始
-    for i in range(window_size, seq_len):
-        if mask[0, i] == 0:  # 如果当前位置是padding，则跳过
-            continue
-
-        # 3. 确定负例集合：前window_size个真实token
-        # 我们使用真实标签(labels)来确定负例，这比用模型预测更稳定
-        # 且避免了惩罚模型正确预测出重复内容的情况
-        # negative_candidates = labels[0, i - window_size : i]
-        token_counts = {}
-        for j in range(max(0, i - window_size), i):
-            token = labels[0, j].item()
-            token_counts[token] = token_counts.get(token, 0) + 1
-        # 只将出现次数超过阈值的token作为负例
-        negative_candidates = []
-        for token, count in token_counts.items():
-            if count >= 3:  # 可调整阈值
-                negative_candidates.append(token)
-        
-        # 4. 获取模型在当前位置 i 对这些负例token预测的概率
-        # log_probs[batch, seq_pos, token_indices]
-        log_probs_of_negatives = log_probs[0, i, negative_candidates]
-        
-        # 5. 计算unlikelihood损失: -log(1 - p)
-        # 为了数值稳定性，使用 log(1 - exp(log_p))
-        # log_probs_of_negatives 是 log(p), 所以 exp(...) 就是 p
-        probs_of_negatives = torch.exp(log_probs_of_negatives)
-        
-        # 加上一个很小的eps防止log(0)
-        penalty_per_token = -torch.log(1 - probs_of_negatives + 1e-9)
-        
-        # 6. 累加惩罚
-        total_penalty += penalty_per_token.sum()
-        num_penalized_tokens += len(negative_candidates)
-
-    # 对总惩罚进行平均，然后乘以权重
-    if num_penalized_tokens > 0:
-        avg_penalty = total_penalty / num_penalized_tokens
-        return avg_penalty * penalty_weight
-    else:
-        return torch.tensor(0.0, device=logits.device)
-
 def compute_loss(outputs, labels, num_items_in_batch=None):
     audio_logits, text_logits = outputs.logits
     audio_labels, text_labels, audio_loss_mask, text_loss_mask = labels
@@ -298,26 +228,8 @@ def compute_loss(outputs, labels, num_items_in_batch=None):
     text_loss = torch.nn.functional.cross_entropy(text_logits.view(-1, text_logits.shape[-1]), text_labels.view(-1), reduction="none")
 
     audio_loss = (audio_loss * audio_loss_mask.view(-1)).sum() / (audio_loss_mask.view(-1).sum() + 1e-4)
-    text_loss_base = (text_loss * text_loss_mask.view(-1)).sum() / (text_loss_mask.view(-1).sum() + 1e-4)
-
-    # --- 新增：可微分的重复惩罚 ---
-    # 我们只对主分支（text_logits）施加这个惩罚，因为它更关键
-    # text_loss_mask.view(1, -1) 是为了匹配函数内部的 batch_size=1 的假设
-    assert audio_labels.shape[0] == 1, print("we only support micro batch size 1 for demo purpose")
-    unlikelihood_penalty = compute_unlikelihood_penalty(
-        text_logits, 
-        text_labels, 
-        text_loss_mask.view(1, -1), 
-        window_size=5,       # 超参数1：回顾窗口
-        penalty_weight=0.05  # 超参数2：惩罚权重
-    )
-
-    text_loss_total = text_loss_base + unlikelihood_penalty
-    loss = audio_loss + text_loss_total
-
-    #打印出来观察一下惩罚项的大小
-    print(f"CE Loss: {text_loss_base.item():.4f}, Repetition Penalty: {unlikelihood_penalty.item():.4f}, Length of current text_logits: {text_logits.shape[1]}")
-    
+    text_loss = (text_loss * text_loss_mask.view(-1)).sum() / (text_loss_mask.view(-1).sum() + 1e-4)
+    loss = audio_loss + text_loss
     return loss
 
 def train():
